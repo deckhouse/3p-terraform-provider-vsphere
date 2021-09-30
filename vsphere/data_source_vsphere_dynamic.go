@@ -6,9 +6,12 @@ import (
 	"log"
 	"regexp"
 
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vapi/tags"
+	"github.com/vmware/govmomi/vim25/types"
+
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 func dataSourceVSphereDynamic() *schema.Resource {
@@ -31,6 +34,16 @@ func dataSourceVSphereDynamic() *schema.Resource {
 				Type:        schema.TypeString,
 				Optional:    true,
 				Description: "The type of managed object to return.",
+			},
+			"resolve_inventory_path": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Description: "Whether to resolve object's inventory path. Requires additional permissions to traverse all parent objects.",
+			},
+			"inventory_path": {
+				Type:        schema.TypeString,
+				Computed:    true,
+				Description: "Resolved object's inventory path.",
 			},
 		},
 	}
@@ -58,6 +71,26 @@ func dataSourceVSphereDynamicRead(d *schema.ResourceData, meta interface{}) erro
 		log.Printf("dataSourceVSphereDynamic: Multiple matches found: %v", filtered)
 		return fmt.Errorf("multiple objects match the supplied criteria")
 	}
+
+	if resolveInvPath, ok := d.GetOk("resolve_inventory_path"); ok && resolveInvPath.(bool) {
+		client := meta.(*Client).vimClient
+		mor := types.ManagedObjectReference{Type: d.Get("type").(string), Value: filtered[0]}
+
+		finder := find.NewFinder(client.Client, false)
+		e, err := finder.Element(context.TODO(), mor)
+		if err != nil {
+			return err
+		}
+		if len(e.Path) == 0 {
+			return fmt.Errorf("got empty inventory path for ManagedObjectReference: %+v", mor)
+		}
+
+		err = d.Set("inventory_path", e.Path)
+		if err != nil {
+			return err
+		}
+	}
+
 	d.SetId(filtered[0])
 	log.Printf("[DEBUG] dataSourceDynamic: Read complete. Resource located: %s", filtered[0])
 	return nil
